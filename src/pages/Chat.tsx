@@ -212,7 +212,11 @@ export default function Chat() {
       );
     } catch (error) {
       console.error("Decryption error:", error);
-      return "[❌ Decryption failed - Message corrupted or wrong key]";
+      // If we're the sender, we can't decrypt (encrypted with recipient's key)
+      if (currentUser && msg.sender_id === currentUser.id) {
+        return "[Message sent - visible to recipient only]";
+      }
+      return "[❌ Decryption failed]";
     }
   };
 
@@ -236,6 +240,18 @@ export default function Chat() {
     setIsLoading(true);
 
     try {
+      // Get current user's public key
+      const { data: senderProfile } = await supabase
+        .from("profiles")
+        .select("public_key")
+        .eq("id", currentUser.id)
+        .single();
+
+      if (!senderProfile?.public_key) {
+        throw new Error("Your encryption keys are not set up");
+      }
+
+      // Encrypt the message with RECIPIENT's public key so they can decrypt it
       const encrypted = await encryptMessage(newMessage, selectedUser.public_key);
 
       const { error } = await supabase.from("messages").insert({
@@ -247,6 +263,19 @@ export default function Chat() {
       });
 
       if (error) throw error;
+
+      // Add the message locally with the decrypted content (we know what we sent)
+      const newMsg = {
+        id: crypto.randomUUID(),
+        conversation_id: conversationId,
+        sender_id: currentUser.id,
+        encrypted_content: encrypted.encryptedContent,
+        encrypted_key: encrypted.encryptedKey,
+        iv: encrypted.iv,
+        created_at: new Date().toISOString(),
+        decrypted: newMessage, // We already know the plaintext
+      };
+      setMessages((prev) => [...prev, newMsg]);
 
       setNewMessage("");
     } catch (error: any) {

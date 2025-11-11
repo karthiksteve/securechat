@@ -57,11 +57,14 @@ export default function Auth() {
       // Generate RSA key pair
       const { publicKey, privateKey } = await generateRSAKeyPair();
       
+      const redirectBase = (import.meta.env.VITE_APP_URL as string) || window.location.origin;
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/`,
+          // Use explicit deploy-time URL so Supabase confirmation links point to production
+          emailRedirectTo: `${redirectBase}/`,
           data: {
             username,
             public_key: publicKey,

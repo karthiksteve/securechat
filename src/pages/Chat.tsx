@@ -244,10 +244,10 @@ export default function Chat() {
   };
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedContact || !currentUser) return;
+    if (!newMessage.trim() || !selectedUser || !currentUser || !conversationId) return;
     
     try {
-      const recipientPublicKey = selectedContact.public_key;
+      const recipientPublicKey = selectedUser.public_key;
       const senderPublicKey = await supabase
         .from('profiles')
         .select('public_key')
@@ -268,8 +268,6 @@ export default function Chat() {
       // Encrypt message ONCE with both public keys
       const { encryptedContent, recipientEncryptedKey, senderEncryptedKey, iv } = 
         await encryptMessageForBoth(newMessage, recipientPublicKey, senderPublicKey);
-
-      const conversationId = await getOrCreateConversation(selectedContact.id);
       
       const { error } = await supabase.from('messages').insert({
         conversation_id: conversationId,

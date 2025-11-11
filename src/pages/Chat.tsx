@@ -35,6 +35,7 @@ export default function Chat() {
   const [newMessage, setNewMessage] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [sentMessagesCache, setSentMessagesCache] = useState<Map<string, string>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -47,6 +48,11 @@ export default function Chat() {
         return;
       }
       setCurrentUser(session.user);
+      
+      // Load sent messages cache from localStorage
+      const cacheKey = `sent_msg_${session.user.id}`;
+      const existingCache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+      setSentMessagesCache(new Map(Object.entries(existingCache)));
       
       // Check and regenerate keys if missing
       const privateKey = getPrivateKey();
@@ -197,6 +203,12 @@ export default function Chat() {
   };
 
   const decryptMessageContent = async (msg: Message): Promise<string> => {
+    // Check if we have this message in our sent cache
+    const cachedMessage = sentMessagesCache.get(msg.id);
+    if (cachedMessage) {
+      return cachedMessage;
+    }
+
     const privateKey = getPrivateKey();
     if (!privateKey) {
       console.warn("Private key not found in localStorage");
@@ -254,28 +266,30 @@ export default function Chat() {
       // Encrypt the message with RECIPIENT's public key so they can decrypt it
       const encrypted = await encryptMessage(newMessage, selectedUser.public_key);
 
-      const { error } = await supabase.from("messages").insert({
-        conversation_id: conversationId,
-        sender_id: currentUser.id,
-        encrypted_content: encrypted.encryptedContent,
-        encrypted_key: encrypted.encryptedKey,
-        iv: encrypted.iv,
-      });
+      const { data: insertedMessage, error } = await supabase
+        .from("messages")
+        .insert({
+          conversation_id: conversationId,
+          sender_id: currentUser.id,
+          encrypted_content: encrypted.encryptedContent,
+          encrypted_key: encrypted.encryptedKey,
+          iv: encrypted.iv,
+        })
+        .select()
+        .single();
 
       if (error) throw error;
 
-      // Add the message locally with the decrypted content (we know what we sent)
-      const newMsg = {
-        id: crypto.randomUUID(),
-        conversation_id: conversationId,
-        sender_id: currentUser.id,
-        encrypted_content: encrypted.encryptedContent,
-        encrypted_key: encrypted.encryptedKey,
-        iv: encrypted.iv,
-        created_at: new Date().toISOString(),
-        decrypted: newMessage, // We already know the plaintext
-      };
-      setMessages((prev) => [...prev, newMsg]);
+      // Cache the sent message plaintext so we can display it
+      if (insertedMessage) {
+        setSentMessagesCache((prev) => new Map(prev).set(insertedMessage.id, newMessage));
+        
+        // Also store in localStorage for persistence
+        const cacheKey = `sent_msg_${currentUser.id}`;
+        const existingCache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+        existingCache[insertedMessage.id] = newMessage;
+        localStorage.setItem(cacheKey, JSON.stringify(existingCache));
+      }
 
       setNewMessage("");
     } catch (error: any) {

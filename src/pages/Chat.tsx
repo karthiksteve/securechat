@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { LogOut, Send, Shield, Users, MessageSquare } from "lucide-react";
-import { encryptMessage, decryptMessage, getPrivateKey } from "@/utils/encryption";
+import { encryptMessage, decryptMessage, generateRSAKeyPair, storePrivateKey, getPrivateKey, encryptMessageForBoth } from "@/utils/encryption";
 
 interface Profile {
   id: string;
@@ -23,6 +23,7 @@ interface Message {
   encrypted_content: string;
   encrypted_key: string;
   sender_encrypted_key?: string | null;
+  sender_iv?: string | null;
   iv: string;
   created_at: string;
   decrypted?: string;
@@ -243,59 +244,51 @@ export default function Chat() {
   };
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedUser || !conversationId || !currentUser) return;
-
-    if (!selectedUser.public_key) {
-      toast({
-        title: "Cannot send message",
-        description: "Recipient has not set up encryption keys",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsLoading(true);
-
+    if (!newMessage.trim() || !selectedContact || !currentUser) return;
+    
     try {
-      // Get current user's public key
-      const { data: senderProfile } = await supabase
-        .from("profiles")
-        .select("public_key")
-        .eq("id", currentUser.id)
-        .single();
+      const recipientPublicKey = selectedContact.public_key;
+      const senderPublicKey = await supabase
+        .from('profiles')
+        .select('public_key')
+        .eq('id', currentUser.id)
+        .single()
+        .then(({ data }) => data?.public_key);
 
-      if (!senderProfile?.public_key) {
-        throw new Error("Your encryption keys are not set up");
+      if (!recipientPublicKey || !senderPublicKey) {
+        console.error("Missing public keys", { recipientPublicKey, senderPublicKey });
+        toast({
+          title: "Error",
+          description: "Unable to encrypt message. Missing public keys.",
+          variant: "destructive",
+        });
+        return;
       }
 
-      // Encrypt the message TWICE: once for recipient, once for sender
-      const recipientEncryption = await encryptMessage(newMessage, selectedUser.public_key);
-      const senderEncryption = await encryptMessage(newMessage, senderProfile.public_key);
+      // Encrypt message ONCE with both public keys
+      const { encryptedContent, recipientEncryptedKey, senderEncryptedKey, iv } = 
+        await encryptMessageForBoth(newMessage, recipientPublicKey, senderPublicKey);
 
-      const { data: insertedMessage, error } = await supabase
-        .from("messages")
-        .insert({
-          conversation_id: conversationId,
-          sender_id: currentUser.id,
-          encrypted_content: recipientEncryption.encryptedContent,
-          encrypted_key: recipientEncryption.encryptedKey,
-          sender_encrypted_key: senderEncryption.encryptedKey,
-          iv: recipientEncryption.iv,
-        })
-        .select()
-        .single();
+      const conversationId = await getOrCreateConversation(selectedContact.id);
+      
+      const { error } = await supabase.from('messages').insert({
+        conversation_id: conversationId,
+        sender_id: currentUser.id,
+        encrypted_content: encryptedContent,
+        encrypted_key: recipientEncryptedKey,
+        sender_encrypted_key: senderEncryptedKey,
+        iv: iv,
+      });
 
       if (error) throw error;
-
-      setNewMessage("");
-    } catch (error: any) {
+      setNewMessage('');
+    } catch (error) {
+      console.error('Error sending message:', error);
       toast({
-        title: "Error sending message",
-        description: error.message,
+        title: "Error",
+        description: "Failed to send message.",
         variant: "destructive",
       });
-    } finally {
-      setIsLoading(false);
     }
   };
 

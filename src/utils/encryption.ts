@@ -106,6 +106,65 @@ export async function encryptMessage(
   };
 }
 
+// Encrypt message for multiple recipients (sender + recipient)
+export async function encryptMessageForBoth(
+  message: string,
+  recipientPublicKey: string,
+  senderPublicKey: string
+): Promise<{ 
+  encryptedContent: string; 
+  recipientEncryptedKey: string; 
+  senderEncryptedKey: string;
+  iv: string 
+}> {
+  // Generate ONE AES key for this message
+  const aesKey = await generateAESKey();
+  
+  // Generate IV
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  
+  // Encrypt message with AES (ONCE)
+  const encodedMessage = new TextEncoder().encode(message);
+  const encryptedContent = await crypto.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv: iv,
+    },
+    aesKey,
+    encodedMessage
+  );
+
+  // Export the SAME AES key
+  const exportedAESKey = await crypto.subtle.exportKey("raw", aesKey);
+  
+  // Encrypt the SAME AES key with recipient's RSA public key
+  const recipientKey = await importRSAPublicKey(recipientPublicKey);
+  const recipientEncryptedKey = await crypto.subtle.encrypt(
+    {
+      name: "RSA-OAEP",
+    },
+    recipientKey,
+    exportedAESKey
+  );
+
+  // Encrypt the SAME AES key with sender's RSA public key
+  const senderKey = await importRSAPublicKey(senderPublicKey);
+  const senderEncryptedKey = await crypto.subtle.encrypt(
+    {
+      name: "RSA-OAEP",
+    },
+    senderKey,
+    exportedAESKey
+  );
+
+  return {
+    encryptedContent: btoa(String.fromCharCode(...new Uint8Array(encryptedContent))),
+    recipientEncryptedKey: btoa(String.fromCharCode(...new Uint8Array(recipientEncryptedKey))),
+    senderEncryptedKey: btoa(String.fromCharCode(...new Uint8Array(senderEncryptedKey))),
+    iv: btoa(String.fromCharCode(...new Uint8Array(iv))),
+  };
+}
+
 // Decrypt message
 export async function decryptMessage(
   encryptedContent: string,

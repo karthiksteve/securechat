@@ -174,7 +174,7 @@ export default function Chat() {
   const loadMessages = async (convId: string) => {
     const { data, error } = await supabase
       .from("messages")
-      .select("*")
+      .select("id, sender_id, encrypted_content, encrypted_key, sender_encrypted_key, iv, created_at")
       .eq("conversation_id", convId)
       .order("created_at", { ascending: true });
 
@@ -205,17 +205,32 @@ export default function Chat() {
     }
 
     try {
-      // If we're the sender, use sender_encrypted_key; otherwise use encrypted_key
-      const encryptedKey = (currentUser && msg.sender_id === currentUser.id && msg.sender_encrypted_key)
-        ? msg.sender_encrypted_key
-        : msg.encrypted_key;
+      // Determine which encrypted key to use
+      let encryptedKey: string;
+      
+      if (currentUser && msg.sender_id === currentUser.id) {
+        // We sent this message - use sender_encrypted_key
+        if (!msg.sender_encrypted_key) {
+          console.warn("Sender encrypted key missing for sent message");
+          return "[⚠️ Old message - sent before dual encryption update]";
+        }
+        encryptedKey = msg.sender_encrypted_key;
+        console.log("Decrypting sent message with sender_encrypted_key");
+      } else {
+        // We received this message - use encrypted_key
+        encryptedKey = msg.encrypted_key;
+        console.log("Decrypting received message with encrypted_key");
+      }
 
-      return await decryptMessage(
+      const decrypted = await decryptMessage(
         msg.encrypted_content,
         encryptedKey,
         msg.iv,
         privateKey
       );
+      
+      console.log("Decryption successful");
+      return decrypted;
     } catch (error) {
       console.error("Decryption error:", error);
       return "[❌ Decryption failed]";

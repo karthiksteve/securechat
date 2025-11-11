@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { LogOut, Send, Shield, Users, MessageSquare } from "lucide-react";
-import { encryptMessage, decryptMessage, generateRSAKeyPair, storePrivateKey, getPrivateKey, encryptMessageForBoth } from "@/utils/encryption";
+import { decryptMessage, generateRSAKeyPair, storePrivateKey, getPrivateKey, encryptMessageForBoth } from "@/utils/encryption";
 
 interface Profile {
   id: string;
@@ -23,7 +23,6 @@ interface Message {
   encrypted_content: string;
   encrypted_key: string;
   sender_encrypted_key?: string | null;
-  sender_iv?: string | null;
   iv: string;
   created_at: string;
   decrypted?: string;
@@ -54,7 +53,6 @@ export default function Chat() {
       const privateKey = getPrivateKey();
       if (!privateKey) {
         try {
-          const { generateRSAKeyPair, storePrivateKey } = await import("@/utils/encryption");
           const { publicKey, privateKey: newPrivateKey } = await generateRSAKeyPair();
           storePrivateKey(newPrivateKey);
           
@@ -86,7 +84,7 @@ export default function Chat() {
 
     initAuth();
     return () => subscription.unsubscribe();
-  }, [navigate]);
+  }, [navigate, toast]);
 
   useEffect(() => {
     if (conversationId) {
@@ -110,7 +108,7 @@ export default function Chat() {
         supabase.removeChannel(channel);
       };
     }
-  }, [conversationId]);
+  }, [conversationId, currentUser]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -213,14 +211,12 @@ export default function Chat() {
         // We sent this message - use sender_encrypted_key
         if (!msg.sender_encrypted_key) {
           console.warn("Sender encrypted key missing for sent message");
-          return "[⚠️ Old message - sent before dual encryption update]";
+          return "[⚠️ Old message - sent before encryption update]";
         }
         encryptedKey = msg.sender_encrypted_key;
-        console.log("Decrypting sent message with sender_encrypted_key");
       } else {
         // We received this message - use encrypted_key
         encryptedKey = msg.encrypted_key;
-        console.log("Decrypting received message with encrypted_key");
       }
 
       const decrypted = await decryptMessage(
@@ -230,7 +226,6 @@ export default function Chat() {
         privateKey
       );
       
-      console.log("Decryption successful");
       return decrypted;
     } catch (error) {
       console.error("Decryption error:", error);
@@ -244,45 +239,53 @@ export default function Chat() {
   };
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedUser || !currentUser || !conversationId) return;
+    if (!newMessage.trim() || !selectedUser || !currentUser || !conversationId) {
+      console.warn("Cannot send message - missing required data");
+      return;
+    }
+    
+    setIsLoading(true);
     
     try {
-      console.log("Starting message send...");
       const recipientPublicKey = selectedUser.public_key;
       
-      console.log("Fetching sender public key...");
-      const senderPublicKey = await supabase
+      // Get sender's public key
+      const { data: senderProfile } = await supabase
         .from('profiles')
         .select('public_key')
         .eq('id', currentUser.id)
-        .single()
-        .then(({ data }) => data?.public_key);
-
-      console.log("Keys:", { recipientPublicKey: !!recipientPublicKey, senderPublicKey: !!senderPublicKey });
+        .single();
+      
+      const senderPublicKey = senderProfile?.public_key;
 
       if (!recipientPublicKey || !senderPublicKey) {
-        console.error("Missing public keys", { recipientPublicKey, senderPublicKey });
+        console.error("Missing public keys", { 
+          recipientPublicKey: !!recipientPublicKey, 
+          senderPublicKey: !!senderPublicKey 
+        });
         toast({
           title: "Error",
-          description: "Unable to encrypt message. Missing public keys.",
+          description: "Unable to encrypt message. Missing encryption keys.",
           variant: "destructive",
         });
         return;
       }
 
-      console.log("Encrypting message...");
       // Encrypt message ONCE with both public keys
-      const { encryptedContent, recipientEncryptedKey, senderEncryptedKey, iv } = 
-        await encryptMessageForBoth(newMessage, recipientPublicKey, senderPublicKey);
+      const encryption = await encryptMessageForBoth(
+        newMessage, 
+        recipientPublicKey, 
+        senderPublicKey
+      );
       
-      console.log("Encryption complete, inserting into database...");
+      // Insert message into database
       const { error } = await supabase.from('messages').insert({
         conversation_id: conversationId,
         sender_id: currentUser.id,
-        encrypted_content: encryptedContent,
-        encrypted_key: recipientEncryptedKey,
-        sender_encrypted_key: senderEncryptedKey,
-        iv: iv,
+        encrypted_content: encryption.encryptedContent,
+        encrypted_key: encryption.recipientEncryptedKey,
+        sender_encrypted_key: encryption.senderEncryptedKey,
+        iv: encryption.iv,
       });
 
       if (error) {
@@ -290,7 +293,6 @@ export default function Chat() {
         throw error;
       }
       
-      console.log("Message sent successfully!");
       setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
@@ -299,6 +301,8 @@ export default function Chat() {
         description: `Failed to send message: ${error instanceof Error ? error.message : 'Unknown error'}`,
         variant: "destructive",
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 

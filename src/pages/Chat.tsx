@@ -247,13 +247,18 @@ export default function Chat() {
     if (!newMessage.trim() || !selectedUser || !currentUser || !conversationId) return;
     
     try {
+      console.log("Starting message send...");
       const recipientPublicKey = selectedUser.public_key;
+      
+      console.log("Fetching sender public key...");
       const senderPublicKey = await supabase
         .from('profiles')
         .select('public_key')
         .eq('id', currentUser.id)
         .single()
         .then(({ data }) => data?.public_key);
+
+      console.log("Keys:", { recipientPublicKey: !!recipientPublicKey, senderPublicKey: !!senderPublicKey });
 
       if (!recipientPublicKey || !senderPublicKey) {
         console.error("Missing public keys", { recipientPublicKey, senderPublicKey });
@@ -265,10 +270,12 @@ export default function Chat() {
         return;
       }
 
+      console.log("Encrypting message...");
       // Encrypt message ONCE with both public keys
       const { encryptedContent, recipientEncryptedKey, senderEncryptedKey, iv } = 
         await encryptMessageForBoth(newMessage, recipientPublicKey, senderPublicKey);
       
+      console.log("Encryption complete, inserting into database...");
       const { error } = await supabase.from('messages').insert({
         conversation_id: conversationId,
         sender_id: currentUser.id,
@@ -278,13 +285,18 @@ export default function Chat() {
         iv: iv,
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Database insert error:", error);
+        throw error;
+      }
+      
+      console.log("Message sent successfully!");
       setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
       toast({
         title: "Error",
-        description: "Failed to send message.",
+        description: `Failed to send message: ${error instanceof Error ? error.message : 'Unknown error'}`,
         variant: "destructive",
       });
     }

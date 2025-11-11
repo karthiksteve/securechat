@@ -1,127 +1,188 @@
 # SecureChat - End-to-End Encrypted Messaging
 
-## Project info
+A secure, real-time messaging application with end-to-end encryption using AES-256-GCM and RSA-OAEP-2048.
 
-A secure messaging application with AES-256 and RSA encryption.
+## 🔐 Features
 
-## How can I edit this code?
+- **End-to-End Encryption**: Messages encrypted with AES-256-GCM
+- **RSA Key Exchange**: 2048-bit RSA-OAEP for secure key distribution
+- **Real-time Messaging**: Instant message delivery using Supabase Realtime
+- **User Authentication**: Secure email/password authentication
+- **Message History**: Encrypted message storage with selective decryption
 
-There are several ways of editing your application.
-
-**Use your preferred IDE**
-
-You can clone this repo and push changes.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
-
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
+## 🚀 Quick Start
 
 ### Prerequisites
 
-Before deploying, make sure you have:
-1. A Supabase project set up ([supabase.com](https://supabase.com))
-2. Your Supabase URL and Anon Key
+- Node.js 18+ and npm
+- Supabase account ([sign up free](https://supabase.com))
 
-### Option 1: Deploy to Vercel (Recommended)
+### 1. Database Setup ⚠️ IMPORTANT
 
-**Step 1: Set up your environment variables**
+Before running the app, you MUST set up your database:
 
-Create a `.env` file in the root directory:
+**See [SETUP_DATABASE.md](./SETUP_DATABASE.md) for detailed instructions.**
+
+Quick version:
+1. Go to your Supabase project's SQL Editor
+2. Run the migrations in `supabase/migrations/` in order:
+   - `20251111143544_29785be6-4723-4673-b7d3-c61bfe8d6183.sql`
+   - `20251112000000_add_sender_encrypted_key.sql`
+
+### 2. Local Development
+
 ```bash
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_anon_key
+# Clone the repository
+git clone <YOUR_GIT_URL>
+cd securechat
+
+# Install dependencies
+npm install
+
+# Create .env file
+cp .env.example .env
+
+# Add your Supabase credentials to .env:
+# VITE_SUPABASE_URL=your_supabase_url
+# VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_anon_key
+
+# Start development server
+npm run dev
 ```
 
-**Step 2: Deploy using Vercel CLI**
+### 3. Deploy to Vercel
 
 ```bash
-# Login to Vercel (first time only)
-vercel login
+# Install Vercel CLI
+npm i -g vercel
 
-# Deploy to production
+# Deploy
 vercel --prod
 ```
 
-Follow the prompts and add your environment variables when asked.
+Add these environment variables in Vercel dashboard:
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `VITE_APP_URL` (your Vercel URL, e.g., https://yourapp.vercel.app)
 
-**Step 3: Or deploy via Vercel Dashboard**
 
-1. Go to [vercel.com](https://vercel.com) and sign in
-2. Click "Add New Project"
-3. Import your GitHub repository
-4. Add environment variables in the settings
-5. Click "Deploy"
+## 🛠️ Technology Stack
 
-### Option 2: Deploy to Netlify
+- **Frontend**: React 18 + TypeScript
+- **Build Tool**: Vite 5
+- **UI Components**: shadcn-ui + Tailwind CSS
+- **Backend**: Supabase (PostgreSQL + Row Level Security)
+- **Encryption**: Web Crypto API (AES-256-GCM, RSA-OAEP-2048)
+- **Real-time**: Supabase Realtime subscriptions
+- **Deployment**: Vercel
+
+## 📁 Project Structure
+
+```
+├── src/
+│   ├── pages/
+│   │   ├── Auth.tsx          # Authentication page
+│   │   ├── Chat.tsx          # Main chat interface
+│   │   └── Index.tsx         # Landing page
+│   ├── utils/
+│   │   └── encryption.ts     # Encryption utilities
+│   ├── components/ui/        # shadcn-ui components
+│   └── integrations/
+│       └── supabase/         # Supabase client
+├── supabase/
+│   └── migrations/           # Database migrations
+└── public/                   # Static assets
+```
+
+## 🔒 How Encryption Works
+
+1. **Key Generation**: Each user gets a unique RSA-2048 key pair
+   - Public key stored in database
+   - Private key stored in browser localStorage
+
+2. **Sending a Message**:
+   - Generate random AES-256 key
+   - Encrypt message with AES key
+   - Encrypt AES key with recipient's RSA public key → `encrypted_key`
+   - Encrypt SAME AES key with sender's RSA public key → `sender_encrypted_key`
+   - Store encrypted message + both encrypted keys + IV
+
+3. **Reading Messages**:
+   - **Received messages**: Decrypt `encrypted_key` with your private key → get AES key → decrypt message
+   - **Sent messages**: Decrypt `sender_encrypted_key` with your private key → get AES key → decrypt message
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Create a `.env` file:
 
 ```bash
-# Install Netlify CLI
-npm install -g netlify-cli
-
-# Login to Netlify
-netlify login
-
-# Deploy
-netlify deploy --prod
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key-here
+VITE_APP_URL=http://localhost:5173  # For local dev
 ```
 
-### Option 3: Deploy to GitHub Pages
+For production deployment, set `VITE_APP_URL` to your deployed URL.
 
-Add this to your `package.json` scripts:
-```json
-"deploy": "npm run build && npx gh-pages -d dist"
-```
+## 📝 Development
 
-Then run:
 ```bash
-npm install -g gh-pages
-npm run deploy
+# Install dependencies
+npm install
+
+# Start dev server
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
 ```
 
-### Manual Deployment
+## 🚢 Deployment
 
-For any other hosting provider:
+### Vercel (Recommended)
 
-1. Build the project: `npm run build`
-2. Upload the `dist` folder to your hosting service
-3. Make sure to set the environment variables in your hosting dashboard
+1. Push code to GitHub
+2. Import repository in Vercel
+3. Add environment variables
+4. Deploy
+
+### Other Platforms
+
+```bash
+# Build
+npm run build
+
+# Upload the 'dist' folder to your hosting provider
+```
+
+## ⚠️ Important Notes
+
+- **Database Migration Required**: You MUST run the SQL migrations before the app works. See [SETUP_DATABASE.md](./SETUP_DATABASE.md)
+- **Private Keys**: Stored in browser localStorage. Clearing browser data = losing access to old messages
+- **Email Confirmation**: Supabase sends confirmation emails. Update Site URL in Supabase dashboard to match your domain
+
+## 🐛 Troubleshooting
+
+**"column 'sender_encrypted_key' does not exist"**
+- Run the database migration: `supabase/migrations/20251112000000_add_sender_encrypted_key.sql`
+
+**"Decryption failed" on sent messages**
+- Clear browser data and sign in again to regenerate keys
+- Old messages sent before migration won't be viewable
+
+**Email confirmation not working**
+- Set VITE_APP_URL in environment variables
+- Update Supabase Site URL to match your production domain
+
+## 📄 License
+
+MIT
+
+## 🤝 Contributing
+
+This is a personal project. Feel free to fork and modify for your own use.
+

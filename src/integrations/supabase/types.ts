@@ -41,6 +41,7 @@ export type Database = {
           created_at: string | null
           encrypted_content: string
           encrypted_key: string
+          sender_encrypted_key: string | null
           id: string
           iv: string
           sender_id: string
@@ -50,6 +51,7 @@ export type Database = {
           created_at?: string | null
           encrypted_content: string
           encrypted_key: string
+          sender_encrypted_key?: string | null
           id?: string
           iv: string
           sender_id: string
@@ -59,6 +61,7 @@ export type Database = {
           created_at?: string | null
           encrypted_content?: string
           encrypted_key?: string
+          sender_encrypted_key?: string | null
           id?: string
           iv?: string
           sender_id?: string

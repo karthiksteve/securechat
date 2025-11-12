@@ -8,7 +8,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { LogOut, Send, Shield, Users, MessageSquare } from "lucide-react";
+import { KeyStatusBadge } from "@/components/KeyStatusBadge";
 import { decryptMessage, generateRSAKeyPair, storePrivateKey, getPrivateKey, encryptMessageForBoth } from "@/utils/encryption";
+import { getQueuedMessages, addQueuedMessage, removeQueuedMessage } from "@/utils/messageQueue";
 
 interface Profile {
   id: string;
@@ -29,13 +31,38 @@ interface Message {
 }
 
 export default function Chat() {
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  // Use explicit user and nullable types instead of any
+  const [currentUser, setCurrentUser] = useState<{ id: string } | null>(null);
   const [users, setUsers] = useState<Profile[]>([]);
   const [selectedUser, setSelectedUser] = useState<Profile | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 20;
   const [newMessage, setNewMessage] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [unsent, setUnsent] = useState(getQueuedMessages());
+  // Try to resend unsent messages on mount or when user changes
+  useEffect(() => {
+    if (!currentUser) return;
+    resendUnsentMessages();
+    // eslint-disable-next-line
+  }, [currentUser]);
+
+  const resendUnsentMessages = async () => {
+    const queue = getQueuedMessages();
+    for (let i = 0; i < queue.length; i++) {
+      const msg = queue[i];
+      try {
+        await actuallySendMessage(msg.content, msg.conversationId, msg.recipientId);
+        removeQueuedMessage(i);
+      } catch {
+        // Still failed, keep in queue
+      }
+    }
+    setUnsent(getQueuedMessages());
+  };
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -135,47 +162,47 @@ export default function Chat() {
   const selectUser = async (user: Profile) => {
     setSelectedUser(user);
     setMessages([]);
-    
+    setHasMore(true);
     const userId = (await supabase.auth.getUser()).data.user?.id;
     if (!userId) return;
-
     const [id1, id2] = [userId, user.id].sort();
-
-    let { data: conversation, error: convError } = await supabase
+    // Fetch or create conversation deterministically (sorted user IDs)
+    let { data: conversation, error: convSelectError } = await supabase
       .from("conversations")
       .select("id")
       .eq("user1_id", id1)
       .eq("user2_id", id2)
       .single();
-
-    if (convError || !conversation) {
-      const { data: newConv, error: createError } = await supabase
+    if (convSelectError || !conversation) {
+      const { data: newConv, error: convInsertError } = await supabase
         .from("conversations")
         .insert({ user1_id: id1, user2_id: id2 })
         .select()
         .single();
-
-      if (createError) {
+      if (convInsertError) {
         toast({
           title: "Error creating conversation",
-          description: createError.message,
+          description: convInsertError.message,
           variant: "destructive",
         });
         return;
       }
       conversation = newConv;
     }
-
     setConversationId(conversation.id);
-    loadMessages(conversation.id);
+    loadMessages(conversation.id, true);
   };
 
-  const loadMessages = async (convId: string) => {
-    const { data, error } = await supabase
+  // Load messages with pagination
+  const loadMessages = async (convId: string, fromStart = true) => {
+    setLoadingMore(true);
+    const offset = fromStart ? 0 : messages.length;
+    const { data, error, count } = await supabase
       .from("messages")
-      .select("id, sender_id, encrypted_content, encrypted_key, sender_encrypted_key, iv, created_at")
+      .select("id, sender_id, encrypted_content, encrypted_key, sender_encrypted_key, iv, created_at", { count: "exact" })
       .eq("conversation_id", convId)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
 
     if (error) {
       toast({
@@ -183,6 +210,7 @@ export default function Chat() {
         description: error.message,
         variant: "destructive",
       });
+      setLoadingMore(false);
       return;
     }
 
@@ -193,7 +221,13 @@ export default function Chat() {
       }))
     );
 
-    setMessages(decryptedMessages);
+    if (fromStart) {
+      setMessages(decryptedMessages);
+    } else {
+      setMessages((prev) => [...decryptedMessages, ...prev]);
+    }
+    setHasMore((offset + (data?.length || 0)) < (count || 0));
+    setLoadingMore(false);
   };
 
   const decryptMessageContent = async (msg: Message): Promise<string> => {
@@ -238,67 +272,57 @@ export default function Chat() {
     setMessages((prev) => [...prev, { ...msg, decrypted }]);
   };
 
+  // Actually send a message (used for both normal and resend)
+  const actuallySendMessage = async (content: string, convId: string, recipientId: string) => {
+    const recipient = users.find(u => u.id === recipientId);
+    if (!recipient || !currentUser) throw new Error("Recipient or sender missing");
+    const recipientPublicKey = recipient.public_key;
+    const { data: senderProfile } = await supabase
+      .from('profiles')
+      .select('public_key')
+      .eq('id', currentUser.id)
+      .single();
+    const senderPublicKey = senderProfile?.public_key;
+    if (!recipientPublicKey || !senderPublicKey) throw new Error("Missing public keys");
+    const encryption = await encryptMessageForBoth(
+      content,
+      recipientPublicKey,
+      senderPublicKey
+    );
+    const { error } = await supabase.from('messages').insert({
+      conversation_id: convId,
+      sender_id: currentUser.id,
+      encrypted_content: encryption.encryptedContent,
+      encrypted_key: encryption.recipientEncryptedKey,
+      sender_encrypted_key: encryption.senderEncryptedKey,
+      iv: encryption.iv,
+    });
+    if (error) throw error;
+  };
+
+  // Send message with queue fallback
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedUser || !currentUser || !conversationId) {
       console.warn("Cannot send message - missing required data");
       return;
     }
-    
     setIsLoading(true);
-    
     try {
-      const recipientPublicKey = selectedUser.public_key;
-      
-      // Get sender's public key
-      const { data: senderProfile } = await supabase
-        .from('profiles')
-        .select('public_key')
-        .eq('id', currentUser.id)
-        .single();
-      
-      const senderPublicKey = senderProfile?.public_key;
-
-      if (!recipientPublicKey || !senderPublicKey) {
-        console.error("Missing public keys", { 
-          recipientPublicKey: !!recipientPublicKey, 
-          senderPublicKey: !!senderPublicKey 
-        });
-        toast({
-          title: "Error",
-          description: "Unable to encrypt message. Missing encryption keys.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Encrypt message ONCE with both public keys
-      const encryption = await encryptMessageForBoth(
-        newMessage, 
-        recipientPublicKey, 
-        senderPublicKey
-      );
-      
-      // Insert message into database
-      const { error } = await supabase.from('messages').insert({
-        conversation_id: conversationId,
-        sender_id: currentUser.id,
-        encrypted_content: encryption.encryptedContent,
-        encrypted_key: encryption.recipientEncryptedKey,
-        sender_encrypted_key: encryption.senderEncryptedKey,
-        iv: encryption.iv,
-      });
-
-      if (error) {
-        console.error("Database insert error:", error);
-        throw error;
-      }
-      
-      setNewMessage('');
+      await actuallySendMessage(newMessage, conversationId, selectedUser.id);
+      setNewMessage("");
     } catch (error) {
-      console.error('Error sending message:', error);
+      // Queue message for resend
+      addQueuedMessage({
+        conversationId,
+        content: newMessage,
+        recipientId: selectedUser.id,
+        timestamp: Date.now(),
+      });
+      setUnsent(getQueuedMessages());
+      const message = error instanceof Error ? error.message : 'Unknown error';
       toast({
-        title: "Error",
-        description: `Failed to send message: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        title: "Send failed",
+        description: `Message queued for resend: ${message}`,
         variant: "destructive",
       });
     } finally {
@@ -317,6 +341,7 @@ export default function Chat() {
         <div className="flex items-center gap-2">
           <Shield className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-bold">SecureChat</h1>
+          <KeyStatusBadge />
         </div>
         <Button variant="outline" size="sm" onClick={handleSignOut}>
           <LogOut className="h-4 w-4 mr-2" />
@@ -325,6 +350,18 @@ export default function Chat() {
       </header>
 
       <div className="flex-1 flex overflow-hidden">
+        {/* Unsent message queue UI */}
+        {unsent.length > 0 && (
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-red-600 text-white px-4 py-2 rounded shadow-lg flex items-center gap-2">
+            <span>{unsent.length} message(s) failed to send.</span>
+            <button
+              className="underline font-bold"
+              onClick={resendUnsentMessages}
+            >
+              Retry now
+            </button>
+          </div>
+        )}
         <aside className="w-64 border-r bg-card p-4 overflow-y-auto">
           <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
             <Users className="h-4 w-4" />
@@ -368,6 +405,17 @@ export default function Chat() {
 
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-4">
+                  {hasMore && (
+                    <div className="flex justify-center mb-2">
+                      <button
+                        className="text-xs underline text-blue-600 disabled:opacity-50"
+                        disabled={loadingMore}
+                        onClick={() => conversationId && loadMessages(conversationId, false)}
+                      >
+                        {loadingMore ? "Loading..." : "Load more messages"}
+                      </button>
+                    </div>
+                  )}
                   {messages.map((msg) => (
                     <div
                       key={msg.id}

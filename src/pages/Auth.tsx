@@ -18,10 +18,10 @@ const authSchema = z.object({
 });
 
 export default function Auth() {
-  const [isLoading, setIsLoading] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [username, setUsername] = useState("");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [email, setEmail] = useState<string>("");
+  const [password, setPassword] = useState<string>("");
+  const [username, setUsername] = useState<string>("");
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -115,10 +115,11 @@ export default function Auth() {
           navigate("/");
         }
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
       toast({
         title: "Sign up failed",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -178,10 +179,11 @@ export default function Auth() {
       }
 
       navigate("/");
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
       toast({
         title: "Sign in failed",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
     } finally {

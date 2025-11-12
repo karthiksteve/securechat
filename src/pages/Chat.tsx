@@ -167,12 +167,14 @@ export default function Chat() {
     if (!userId) return;
     const [id1, id2] = [userId, user.id].sort();
     // Fetch or create conversation deterministically (sorted user IDs)
-    let { data: conversation, error: convSelectError } = await supabase
+    const { data: existingConv, error: convSelectError } = await supabase
       .from("conversations")
       .select("id")
       .eq("user1_id", id1)
       .eq("user2_id", id2)
       .single();
+    
+    let conversation = existingConv;
     if (convSelectError || !conversation) {
       const { data: newConv, error: convInsertError } = await supabase
         .from("conversations")

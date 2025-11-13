@@ -214,7 +214,18 @@ export async function decryptMessage(
     return new TextDecoder().decode(decryptedContent);
   } catch (error) {
     console.error("Decryption error:", error);
-    return "[Decryption failed]";
+    console.error("Encrypted content length:", encryptedContent?.length);
+    console.error("Encrypted key length:", encryptedKey?.length);
+    console.error("IV length:", iv?.length);
+    
+    // More specific error messages
+    if (error instanceof Error) {
+      if (error.name === "OperationError") {
+        return "[❌ Decryption failed - Invalid key or corrupted data]";
+      }
+      return `[❌ Decryption failed: ${error.message}]`;
+    }
+    return "[❌ Decryption failed]";
   }
 }
 

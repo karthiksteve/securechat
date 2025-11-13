@@ -239,6 +239,12 @@ export default function Chat() {
       return "[🔒 Cannot decrypt - Private key missing. Sign out and sign in again.]";
     }
 
+    // Validate message has required encryption fields
+    if (!msg.encrypted_content || !msg.iv) {
+      console.error("Message missing encryption data:", msg);
+      return "[❌ Invalid message format]";
+    }
+
     try {
       // Determine which encrypted key to use
       let encryptedKey: string;
@@ -246,13 +252,23 @@ export default function Chat() {
       if (currentUser && msg.sender_id === currentUser.id) {
         // We sent this message - use sender_encrypted_key
         if (!msg.sender_encrypted_key) {
-          console.warn("Sender encrypted key missing for sent message");
+          console.warn("Sender encrypted key missing for sent message ID:", msg.id);
           return "[⚠️ Old message - sent before encryption update]";
         }
         encryptedKey = msg.sender_encrypted_key;
       } else {
         // We received this message - use encrypted_key
+        if (!msg.encrypted_key) {
+          console.error("Encrypted key missing for received message ID:", msg.id);
+          return "[❌ Message missing encryption key]";
+        }
         encryptedKey = msg.encrypted_key;
+      }
+
+      // Validate encrypted key format (base64)
+      if (!encryptedKey || encryptedKey.length < 20) {
+        console.error("Invalid encrypted key format for message ID:", msg.id);
+        return "[❌ Corrupted encryption key]";
       }
 
       const decrypted = await decryptMessage(
@@ -262,10 +278,15 @@ export default function Chat() {
         privateKey
       );
       
+      // Check if decryption returned an error message
+      if (decrypted.startsWith("[❌")) {
+        return decrypted;
+      }
+      
       return decrypted;
     } catch (error) {
-      console.error("Decryption error:", error);
-      return "[❌ Decryption failed]";
+      console.error("Decryption error for message ID:", msg.id, error);
+      return "[❌ Decryption failed - check console]";
     }
   };
 
